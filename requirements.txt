@@ -3,3 +3,4 @@ text2vec
 faiss-cpu
 pandas
 openpyxl
+torch==2.0.1
