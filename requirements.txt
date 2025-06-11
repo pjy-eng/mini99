@@ -1,0 +1,5 @@
+streamlit
+text2vec
+faiss-cpu
+pandas
+openpyxl
