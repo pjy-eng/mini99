@@ -1,63 +1,108 @@
+# app.py (最终优化版 - 增加7天时间过滤)
+
 import streamlit as st
-import pandas as pd
-import numpy as np
-import faiss
-from text2vec import SentenceModel
+import requests
+from urllib.parse import quote
+import datetime  # 1. 导入 datetime 模块
 
-# 页面设置
-st.set_page_config(page_title="Mini 99 拍照助手", layout="centered")
-st.title("📸 富士 Mini 99 拍照助手")
-st.markdown("当你要拍摄场景时，我来帮你推荐最合适的参数设置 👇")
+# --- 你的 API 密钥 ---
+API_KEY = "45ad095db3c24b7794771093799e01e6"
 
-# 初始化页面状态
-if "page" not in st.session_state:
-    st.session_state.page = "input"
-if "match_row" not in st.session_state:
-    st.session_state.match_row = None
 
-# 加载中文句向量模型
-model = SentenceModel("shibing624/text2vec-base-chinese")
+# --- 核心功能函数 ---
+def fetch_and_display_news(search_keyword):
+    """根据给定的关键词，获取过去7天的新闻并展示在页面上。"""
 
-# 加载 Excel 数据
-@st.cache_data
-def load_data():
-    df = pd.read_excel('scene.xlsx')
-    scenes = df["scene"].tolist()
-    embeddings = model.encode(scenes, normalize_embeddings=True)
-    return df, scenes, embeddings
+    with st.spinner(f"pjy正在搜索关于 '{search_keyword}' 的近期全球新闻..."):
 
-df, scenes, scene_embeddings = load_data()
+        # --- 2. 新增日期计算逻辑 ---
+        # 获取今天的日期
+        today = datetime.date.today()
+        # 计算7天前的日期
+        seven_days_ago = today - datetime.timedelta(days=7)
+        # 将日期格式化成 API 需要的 YYYY-MM-DD 格式
+        from_date = seven_days_ago.strftime("%Y-%m-%d")
 
-# FAISS 构建索引
-index = faiss.IndexFlatIP(scene_embeddings[0].shape[0])
-index.add(np.array(scene_embeddings))
+        # 对关键词进行URL编码
+        encoded_keyword = quote(search_keyword)
 
-# 页面一：输入场景
-if st.session_state.page == "input":
-    query = st.text_input("📷 请输入拍摄描述场景：", placeholder="例如：凌晨在山顶拍日出")
-    if st.button("🔍 搜索") and query:
-        query_vec = model.encode([query], normalize_embeddings=True)
-        D, I = index.search(np.array(query_vec), k=1)
-        match_row = df.iloc[I[0][0]]
+        # --- 3. 在URL中加入 from 参数，并按发布日期排序 ---
+        url = (f"https://newsapi.org/v2/everything?"
+               f"q={encoded_keyword}&language=en"
+               f"&from={from_date}"  # <-- 新增的时间过滤器
+               f"&sortBy=publishedAt" # <-- 按最新发布排序
+               f"&apiKey={API_KEY}")
 
-        # 保存推荐结果并跳转页面
-        st.session_state.match_row = match_row
-        st.session_state.page = "result"
-        st.rerun()  # ⏩ 立即刷新页面以切换视图
+        try:
+            response = requests.get(url)
+            articles = []
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "ok":
+                    articles = data.get("articles", [])[:15]
+            else:
+                st.error(f"API 请求失败，状态码: {response.status_code}, 响应: {response.text}")
 
-# 页面二：展示结果
-elif st.session_state.page == "result":
-    match_row = st.session_state.match_row
-    st.subheader("🎯 推荐设置")
-    st.markdown(f"**匹配场景**：{match_row['scene']}")
-    st.markdown(f"**模式**：{match_row['mode']}")
-    st.markdown(f"**亮度调节**：{match_row['brightness']}")
-    st.markdown(f"**滤镜建议**：{match_row['filter']}")
-    st.markdown(f"**是否开启闪光**：{'✅ 是' if match_row['flash'] else '❌ 否'}")
-    st.markdown(f"**补充建议**：{match_row['note']}")
+        except Exception as e:
+            st.error(f"请求API时发生网络错误: {e}")
+            articles = []
 
-    # 返回按钮
-    if st.button("🔙 返回"):
-        st.session_state.page = "input"
-        st.session_state.match_row = None
-        st.rerun()  # ⏪ 立即刷新页面回到输入界面
+        if not articles:
+            st.warning(f"过去7天未能获取到关于 '{search_keyword}' 的新闻，请稍后再试。")
+        else:
+            st.success(f"成功获取到 {len(articles)} 条关于 '{search_keyword}' 的近期热门新闻！")
+
+            for i, article in enumerate(articles):
+                title = article.get("title", "无标题")
+                description = article.get("description", "无简介")
+                source_url = article.get("url")
+                source_name = article.get("source", {}).get("name")
+
+                st.subheader(f"{i + 1}. {title}")
+
+                with st.expander("pjy为你展开/折叠简介 (原文)"):
+                    st.write(description)
+
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    st.write(f"**来源:** {source_name}")
+                with col2:
+                    st.link_button("🔗 阅读原文", source_url)
+
+                st.divider()
+
+
+# --- 页面基础设置 ---
+st.set_page_config(
+    page_title="pjy全球娱乐文化基地",
+    page_icon="🎨",
+    layout="wide"
+)
+
+st.title("🎨 pjy全球娱乐文化基地")
+
+
+# --- 创建选项卡 ---
+tab_entertainment, tab_museum, tab_gallery, tab_music = st.tabs([
+    "🌟 娱乐热点",
+    "🏛️ 博物馆",
+    "🖼️ 美术馆",
+    "🎵 音乐"
+])
+
+# --- 为每个选项卡定义内容 ---
+with tab_entertainment:
+    st.header("🌟 全球娱乐热点新闻")
+    fetch_and_display_news("entertainment")
+
+with tab_museum:
+    st.header("🏛️ 全球博物馆相关新闻")
+    fetch_and_display_news("museum")
+
+with tab_gallery:
+    st.header("🖼️ 全球美术馆与展览新闻")
+    fetch_and_display_news('"art gallery" OR "art exhibition"')
+
+with tab_music:
+    st.header("🎵 全球音乐与演唱会新闻")
+    fetch_and_display_news('music OR concert OR festival')
